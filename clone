@@ -1,0 +1,103 @@
+#!/bin/bash
+# vim: set tabstop=4:
+
+SELF="${0##*/}"
+HERE="$(cd $(dirname "$0"); pwd)"
+GITHUB_USER="${SELF#*_}"
+
+LISTOFREPOSITORIES="$(PWD)/list_of_repositories"
+
+#--------------------------------------------------------------------------------------------------
+get_listofrepositories()
+{
+
+	_PAGE=0
+	_IS_LAST_PAGE=NO
+
+	>${LISTOFREPOSITORIES}
+	printf "01. get list of repositories: "
+	while [[ "$_IS_LAST_PAGE" = "NO" ]]
+	do
+		(( _PAGE=$_PAGE + 1))
+		printf "%3d" "$_PAGE"
+
+		_LINK="https://api.github.com/users/${GITHUB_USER}/repos?page=$_PAGE&per_page=500"
+
+		wget -q -O- $_LINK 			|\
+		grep '"clone_url"'			|\
+		cut -d'"' -f4				|\
+		xargs -I{} basename {} .git	>${LISTOFREPOSITORIES}.tmp
+	
+		if [[ -s ${LISTOFREPOSITORIES}.tmp ]]; then
+			cat ${LISTOFREPOSITORIES}.tmp >>${LISTOFREPOSITORIES}
+		else
+			_IS_LAST_PAGE=YES
+		fi
+	done
+	printf "\n"
+
+	sort -o $LISTOFREPOSITORIES $LISTOFREPOSITORIES
+}
+
+#--------------------------------------------------------------------------------------------------
+if [ "$1" == "--list" ]; then
+	get_listofrepositories
+	cat $LISTOFREPOSITORIES
+
+	exit
+elif [ "$1" == "--clone" ]; then
+	MODE=CLONE
+
+	if [ "$2" == "" ]; then
+		get_listofrepositories
+	else
+		echo "https://github.com/${GITHUB_USER}/${2}" >$LISTOFREPOSITORIES
+	fi
+else
+	MODE=CLONE
+	get_listofrepositories
+fi
+
+#--------------------------------------------------------------------------------------------------
+if [ "$MODE" == "CLONE" ]; then
+
+	cd       $HERE
+	mkdir -p repositories/$GITHUB_USER
+
+	cd       repositories/$GITHUB_USER
+	printf "02. change to $(pwd)\n"
+
+	printf "03. reset timestamps of folders\n"
+	touch -t 0101010101 *
+
+	printf "04. clone repositories\n"
+fi
+
+#--------------------------------------------------------------------------------------------------
+cat $LISTOFREPOSITORIES | while read REP
+do	
+	if [ "$MODE" == "CLONE" ]; then
+
+		# https://github.com/${GITHUB_USER}/${REP}.git
+		# git@github.com:${GITHUB_USER}/${REP}.git 2>&1)
+
+		_LINK="git@github.com:${GITHUB_USER}/${REP}.git 2>&1"
+		_LINK="https://github.com/${GITHUB_USER}/${REP}.git"
+
+		printf "    %s\n" "git clone $_LINK"
+		RESULT=$(git clone $_LINK 2>&1)
+		RETURN=$?
+
+		touch ${REP}
+
+		if [ $RETURN == 128 ]; then
+			DIR=$(echo $RESULT | cut -d\' -f2)
+			printf "    %s\n" "Repository Already cloned: '$REP' to $DIR, $(cd $DIR; git pull)"
+		else	
+			printf "    %s\n" "Repository Cloned:         '$REP' cloned."
+		fi
+	fi
+done
+
+#--------------------------------------------------------------------------------------------------
+rm ${LISTOFREPOSITORIES}*
