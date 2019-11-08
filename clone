@@ -1,0 +1,134 @@
+#!/bin/bash
+# vim: set tabstop=4:
+
+SELF="${0##*/}"
+HERE="$(cd $(dirname "$0"); pwd)"
+GITHUB_USER="${SELF#*_}"
+
+_LIST="$HERE/list_of_repositories"
+
+#--------------------------------------------------------------------------------------------------
+do_get__LIST() {
+
+	_PAGE=0
+	_IS_LAST_PAGE=NO
+
+	>${_LIST}
+	printf "01. get list of repositories: "
+	while [[ "$_IS_LAST_PAGE" = "NO" ]]
+	do
+		(( _PAGE=$_PAGE + 1))
+		printf "%3d" "$_PAGE"
+
+		_LINK="https://api.github.com/users/${GITHUB_USER}/repos?page=$_PAGE&per_page=500"
+
+		wget -q -O- $_LINK 			|\
+		grep '"clone_url"'			|\
+		cut -d'"' -f4				|\
+		xargs -I{} basename {} .git	>${_LIST}.tmp
+	
+		if [[ -s ${_LIST}.tmp ]]; then
+			cat ${_LIST}.tmp >>${_LIST}
+		else
+			_IS_LAST_PAGE=YES
+		fi
+	done
+	printf "\n"
+
+	sort -o $_LIST $_LIST
+}
+
+#--------------------------------------------------------------------------------------------------
+do_check() {
+	ls -1F | grep "/$" | cut -d / -f1 | while read _REPNAME
+	do
+		(
+			cd $_REPNAME
+			OUTPUT="$(git status -s 2>&1)"
+
+			echo "$OUTPUT" | while read _LINE
+			do
+				printf "%-64s: %s %s\n" "$_REPNAME" "$_LINE" ""
+			done
+		)
+	done
+
+	exit 0	
+}
+
+#--------------------------------------------------------------------------------------------------
+	cd       $HERE
+	mkdir -p repositories/$GITHUB_USER
+	cd       repositories/$GITHUB_USER
+
+#--------------------------------------------------------------------------------------------------
+if [ "$1" == "--list" ]; then
+	do_get__LIST
+	cat $_LIST
+
+	exit
+elif [ "$1" == "--check" ]; then
+	do_check
+	exit
+elif [ "$1" == "--status" ]; then
+	MODE=STATUS
+	ls -1F | grep "/$" | cut -d / -f1 >$_LIST
+elif [ "$1" == "--clone" ]; then
+	MODE=CLONE
+	if [ "$2" == "" ]; then
+		do_get__LIST
+	else
+		echo "https://github.com/${GITHUB_USER}/${2}" >$_LIST
+	fi
+else
+	MODE=CLONE
+	do_get__LIST
+fi
+
+#--------------------------------------------------------------------------------------------------
+if [ "$MODE" == "CLONE" ]; then
+	cd       repositories/$GITHUB_USER
+	printf "02. change to $(pwd)\n"
+
+	printf "03. reset timestamps of folders\n"
+	touch -t 0101010101 *
+
+	printf "04. clone repositories\n"
+fi
+
+#--------------------------------------------------------------------------------------------------
+cat $_LIST | while read REP
+do	
+	# https://github.com/${GITHUB_USER}/${REP}.git
+	# git@github.com:${GITHUB_USER}/${REP}.git)
+	_LINK="https://github.com/${GITHUB_USER}/${REP}.git"
+	_LINK="git@github.com:${GITHUB_USER}/${REP}.git"
+
+	if [[ "$MODE" == "STATUS" ]]; then
+		RESULT="$(cd $REP; git status -s 2>&1)"
+		RETURN=$?
+
+		if [[ $RETURN == 0xx ]]; then
+			RESULT="Your branch is up to date with 'origin/master'."
+		fi
+
+		MSG="$RESULT"
+	else
+		RESULT=$(git clone $_LINK 2>&1)
+		RETURN=$?
+
+		touch ${REP}
+
+		if [ $RETURN == 128 ]; then
+			DIR=$(echo $RESULT | cut -d\' -f2)
+			MSG="$(cd $DIR; git pull)"
+		else	
+			MSG="cloned"
+		fi
+	fi
+
+	printf "    %-64s: %s\n" "$REP" "$MSG"
+done
+
+#--------------------------------------------------------------------------------------------------
+rm ${_LIST}*
